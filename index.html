@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Autorun Wireframe Coast Demo</title>
+    <style>
+      :root {
+        color-scheme: dark;
+      }
+      body {
+        margin: 0;
+        background: #001028;
+        color: #e0f3ff;
+        font-family: "Segoe UI", sans-serif;
+        overflow: hidden;
+      }
+      canvas {
+        width: 100vw;
+        height: 100vh;
+        display: block;
+      }
+      .hud {
+        position: fixed;
+        top: 1rem;
+        left: 1rem;
+        font-size: 0.9rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: #79baff;
+        text-shadow: 0 0 8px rgba(0, 123, 255, 0.6);
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="autorun"></canvas>
+    <div class="hud">Autorun // Vector Coast // Warp Drive</div>
+    <script>
+      // キャンバス初期化
+      const canvas = document.getElementById("autorun");
+      const ctx = canvas.getContext("2d");
+
+      let width = (canvas.width = window.innerWidth);
+      let height = (canvas.height = window.innerHeight);
+      const horizon = () => height * 0.35;
+
+      // カメラとシーンパラメータ（3Dワイヤーフレーム用）
+      const camera = { x: 0, y: 18, z: -60 };
+      const fov = 980;
+      const segmentLength = 18;
+      const segmentCount = 190;
+      const laneCount = 3;
+      let roadScroll = 0;
+      let roadTotal = 0;
+      let speed = 240; // 高速走行感を強調するため速度を上げる
+      let speedPulse = 0;
+      let curvePhase = 0;
+      let lastTime = performance.now();
+
+      // ウィンドウリサイズ時の処理
+      window.addEventListener("resize", () => {
+        width = canvas.width = window.innerWidth;
+        height = canvas.height = window.innerHeight;
+      });
+
+      // 3D座標をスクリーン座標へ投影
+      const project = (x, y, z) => {
+        const dz = z - camera.z;
+        if (dz <= 1) return null;
+        const scale = fov / dz;
+        return {
+          x: width * 0.5 + (x - camera.x) * scale,
+          y: height * 0.56 - (y - camera.y) * scale,
+          depth: dz,
+        };
+      };
+
+      // メイン描画ループ
+      const render = () => {
+        const now = performance.now();
+        const delta = Math.min(0.05, (now - lastTime) / 1000);
+        lastTime = now;
+
+        // スピード感の揺らぎとスクロール更新
+        speedPulse = (speedPulse + delta * 6.2) % (Math.PI * 2);
+        const pulse = Math.sin(speedPulse) * 24;
+        const distanceStep = (speed + pulse) * delta;
+        roadScroll += distanceStep;
+        if (roadScroll > segmentLength * 1024) roadScroll -= segmentLength * 1024;
+        roadTotal += distanceStep; // 道路全体の進行距離（画面手前へ押し寄せる演出用）
+
+        // コースのうねり位相
+        curvePhase = (curvePhase + delta * 0.45) % (Math.PI * 2);
+
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.clearRect(0, 0, width, height);
+
+        drawSky();
+        drawSun();
+        drawSeaGrid();
+        drawRoad3D();
+        drawCar3D();
+
+        requestAnimationFrame(render);
+      };
+
+      // 空のグラデーションと星の描画
+      const drawSky = () => {
+        const gradient = ctx.createLinearGradient(0, 0, 0, horizon());
+        gradient.addColorStop(0, "#021f4f");
+        gradient.addColorStop(0.5, "#003a83");
+        gradient.addColorStop(1, "#004b9e");
+        ctx.fillStyle = gradient;
+        ctx.fillRect(0, 0, width, horizon());
+
+        ctx.strokeStyle = "rgba(123, 188, 255, 0.35)";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        for (let i = 0; i < 130; i++) {
+          const x = (i * 97) % width;
+          const y = ((i * 619) % horizon()) * 0.8;
+          ctx.moveTo(x, y);
+          // 線で点を表現
+          ctx.lineTo(x + 0.001, y + 0.001);
+        }
+        ctx.stroke();
+      };
+
+      // ワイヤーフレームの太陽
+      const drawSun = () => {
+        const radius = Math.min(width, height) * 0.12;
+        ctx.save();
+        ctx.strokeStyle = "rgba(255, 180, 90, 0.7)";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(width * 0.75, horizon() * 0.6, radius, 0, Math.PI * 2);
+        ctx.stroke();
+
+        ctx.setLineDash([12, 14]);
+        ctx.beginPath();
+        ctx.arc(width * 0.75, horizon() * 0.6, radius * 0.8, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+      };
+
+      // 海面の3Dグリッド描画
+      const drawSeaGrid = () => {
+        ctx.lineWidth = 1;
+        ctx.lineCap = "round";
+
+        ctx.strokeStyle = "rgba(0, 123, 255, 0.45)";
+        const gridScroll = (roadTotal * 0.05) % 1600;
+        for (let z = 80; z < 1400; z += 28) {
+          let depthZ = z - gridScroll;
+          if (depthZ <= 60) depthZ += 1600; // 視点手前に吸い込まれる演出
+          const left = project(-420, -8, depthZ);
+          const right = project(420, -8, depthZ);
+          if (!left || !right) continue;
+          ctx.beginPath();
+          ctx.moveTo(left.x, left.y);
+          ctx.lineTo(right.x, right.y);
+          ctx.stroke();
+        }
+
+        ctx.strokeStyle = "rgba(0, 90, 200, 0.35)";
+        for (let x = -420; x <= 420; x += 54) {
+          let prev = null;
+          for (let z = 120; z < 1200; z += 36) {
+            let depthZ = z - gridScroll;
+            if (depthZ <= 60) depthZ += 1600;
+            const point = project(x, -8 + Math.sin((x + depthZ) * 0.01) * 0.8, depthZ);
+            if (point && prev) {
+              ctx.beginPath();
+              ctx.moveTo(prev.x, prev.y);
+              ctx.lineTo(point.x, point.y);
+              ctx.stroke();
+            }
+            prev = point;
+          }
+        }
+      };
+
+      // 道路と海岸線の3Dワイヤーフレーム描画
+      const drawRoad3D = () => {
+        ctx.lineCap = "round";
+        ctx.lineJoin = "round";
+
+        let prevLeft = null;
+        let prevRight = null;
+        let prevCoastLeft = null;
+        let prevCoastRight = null;
+        let prevLanePoints = new Array(laneCount - 1).fill(null);
+
+        for (let i = 0; i < segmentCount; i++) {
+          const segmentOffset = roadScroll % segmentLength;
+          const segmentZ = i * segmentLength - segmentOffset; // スクロール量を引いて手前に迫る動きを生成
+          const depth = segmentZ - camera.z;
+          if (depth <= 5) continue;
+
+          const worldZ = roadTotal + i * segmentLength;
+          const elevation = Math.sin(worldZ * 0.0023 + curvePhase * 1.7) * 6;
+          const curvature = Math.sin(worldZ * 0.0032 + curvePhase) * 28;
+          const coastRoll = Math.sin(worldZ * 0.002 + curvePhase * 1.2) * 4;
+          const widthMod = Math.sin(worldZ * 0.004 + curvePhase * 0.5) * 3;
+
+          const roadWidth = 26 + widthMod;
+          const centerX = curvature;
+          const roadY = -elevation;
+
+          const left = project(centerX - roadWidth, roadY, segmentZ);
+          const right = project(centerX + roadWidth, roadY, segmentZ);
+          const coastLeft = project(centerX - roadWidth - 28, roadY - 4 - coastRoll, segmentZ);
+          const coastRight = project(centerX + roadWidth + 30, roadY - 3 + coastRoll, segmentZ);
+
+          if (!left || !right) {
+            prevLeft = prevRight = null;
+            prevCoastLeft = prevCoastRight = null;
+            prevLanePoints = new Array(laneCount - 1).fill(null);
+            continue;
+          }
+
+          const edgeWidth = Math.min(3.2, Math.max(0.6, 120 / left.depth));
+          ctx.strokeStyle = "rgba(0, 180, 255, 0.9)";
+          ctx.lineWidth = edgeWidth;
+          if (prevLeft && prevRight) {
+            ctx.beginPath();
+            ctx.moveTo(prevLeft.x, prevLeft.y);
+            ctx.lineTo(left.x, left.y);
+            ctx.stroke();
+
+            ctx.beginPath();
+            ctx.moveTo(prevRight.x, prevRight.y);
+            ctx.lineTo(right.x, right.y);
+            ctx.stroke();
+
+            ctx.beginPath();
+            ctx.moveTo(prevLeft.x, prevLeft.y);
+            ctx.lineTo(prevRight.x, prevRight.y);
+            ctx.stroke();
+          }
+
+          ctx.beginPath();
+          ctx.moveTo(left.x, left.y);
+          ctx.lineTo(right.x, right.y);
+          ctx.stroke();
+
+          ctx.strokeStyle = "rgba(123, 206, 255, 0.9)";
+          const lanePoints = [];
+          for (let lane = 1; lane < laneCount; lane++) {
+            const laneX =
+              centerX - roadWidth + (lane * (roadWidth * 2)) / laneCount;
+            const lanePoint = project(laneX, roadY + 0.05, segmentZ);
+            lanePoints.push(lanePoint);
+            if (lanePoint && prevLanePoints[lane - 1]) {
+              const laneWidth = Math.min(2, Math.max(0.4, 90 / lanePoint.depth));
+              ctx.lineWidth = laneWidth;
+              ctx.beginPath();
+              ctx.moveTo(prevLanePoints[lane - 1].x, prevLanePoints[lane - 1].y);
+              ctx.lineTo(lanePoint.x, lanePoint.y);
+              ctx.stroke();
+            }
+          }
+          prevLanePoints = lanePoints;
+
+          // ガードレール支柱
+          const railHeight = 5;
+          const leftTop = project(centerX - roadWidth - 3, roadY + railHeight, segmentZ);
+          const rightTop = project(centerX + roadWidth + 3, roadY + railHeight, segmentZ);
+          if (leftTop) {
+            ctx.strokeStyle = "rgba(144, 207, 255, 0.75)";
+            ctx.lineWidth = Math.min(2.2, Math.max(0.4, 110 / leftTop.depth));
+            ctx.beginPath();
+            ctx.moveTo(left.x, left.y);
+            ctx.lineTo(leftTop.x, leftTop.y);
+            ctx.stroke();
+          }
+          if (rightTop) {
+            ctx.strokeStyle = "rgba(144, 207, 255, 0.75)";
+            ctx.lineWidth = Math.min(2.2, Math.max(0.4, 110 / rightTop.depth));
+            ctx.beginPath();
+            ctx.moveTo(right.x, right.y);
+            ctx.lineTo(rightTop.x, rightTop.y);
+            ctx.stroke();
+          }
+
+          // 海岸線のワイヤー
+          if (coastLeft && prevCoastLeft) {
+            ctx.strokeStyle = "rgba(0, 123, 255, 0.7)";
+            ctx.lineWidth = Math.min(2, Math.max(0.4, 90 / coastLeft.depth));
+            ctx.beginPath();
+            ctx.moveTo(prevCoastLeft.x, prevCoastLeft.y);
+            ctx.lineTo(coastLeft.x, coastLeft.y);
+            ctx.stroke();
+          }
+          if (coastRight && prevCoastRight) {
+            ctx.strokeStyle = "rgba(0, 123, 255, 0.7)";
+            ctx.lineWidth = Math.min(2, Math.max(0.4, 90 / coastRight.depth));
+            ctx.beginPath();
+            ctx.moveTo(prevCoastRight.x, prevCoastRight.y);
+            ctx.lineTo(coastRight.x, coastRight.y);
+            ctx.stroke();
+          }
+
+          // 海岸へ向かう補助ライン
+          if (coastLeft) {
+            ctx.beginPath();
+            ctx.moveTo(left.x, left.y);
+            ctx.lineTo(coastLeft.x, coastLeft.y);
+            ctx.stroke();
+          }
+          if (coastRight) {
+            ctx.beginPath();
+            ctx.moveTo(right.x, right.y);
+            ctx.lineTo(coastRight.x, coastRight.y);
+            ctx.stroke();
+          }
+
+          prevLeft = left;
+          prevRight = right;
+          prevCoastLeft = coastLeft;
+          prevCoastRight = coastRight;
+        }
+      };
+
+      // プレイヤーカーの3Dワイヤーフレーム
+      const drawCar3D = () => {
+        // プレイヤーカーはカメラから見て静止させ、後方視点を維持
+        const carZ = -14; // カメラ基準のワールド座標
+        const carY = -2.6;
+        const carX = Math.sin(curvePhase * 4) * 1.4;
+
+        const edges = [
+          [[-6, carY, carZ], [6, carY, carZ]],
+          [[-6, carY, carZ], [-3, carY + 3.2, carZ + 8]],
+          [[6, carY, carZ], [3, carY + 3.2, carZ + 8]],
+          [[-3, carY + 3.2, carZ + 8], [3, carY + 3.2, carZ + 8]],
+          [[-4.5, carY, carZ + 4], [4.5, carY, carZ + 4]],
+          [[-4.5, carY, carZ + 4], [-3, carY + 2.2, carZ + 7]],
+          [[4.5, carY, carZ + 4], [3, carY + 2.2, carZ + 7]],
+          [[-6, carY, carZ], [-4.5, carY, carZ + 4]],
+          [[6, carY, carZ], [4.5, carY, carZ + 4]],
+        ];
+
+        ctx.strokeStyle = "rgba(160, 220, 255, 0.92)";
+        ctx.lineWidth = 2;
+        edges.forEach(([a, b]) => {
+          const pa = project(a[0] + carX, a[1], a[2]);
+          const pb = project(b[0] + carX, b[1], b[2]);
+          if (!pa || !pb) return;
+          ctx.beginPath();
+          ctx.moveTo(pa.x, pa.y);
+          ctx.lineTo(pb.x, pb.y);
+          ctx.stroke();
+        });
+
+        // 排気のスピードライン
+        const tailStretch = 12;
+        ctx.strokeStyle = "rgba(0, 123, 255, 0.7)";
+        ctx.lineWidth = 1.5;
+        for (let i = -2; i <= 2; i++) {
+          const tailBase = project(carX + i * 1.4, carY + 0.2, carZ - 1);
+          const tailEnd = project(carX + i * 1.2, carY - 1, carZ - tailStretch - Math.sin(speedPulse + i) * 4);
+          if (!tailBase || !tailEnd) continue;
+          ctx.beginPath();
+          ctx.moveTo(tailBase.x, tailBase.y);
+          ctx.lineTo(tailEnd.x, tailEnd.y);
+          ctx.stroke();
+        }
+      };
+
+      render();
+    </script>
+  </body>
+</html>
